@@ -118,8 +118,9 @@ SAVE_PROOF        = True
 PROOF_AUDIO_PRE_S = 5.0   # seconds of audio ring-buffer to capture before the alert
 
 # ── Inference device ──────────────────────────────────────────────────────────
-# GPU-only deployment — CUDA is required.
-YOLO_DEVICE = "cuda"
+# "auto" → uses CUDA if a GPU with >= YOLO_MIN_VRAM_GB free VRAM is found,
+# otherwise falls back to CPU. Override at launch: python main.py --device cuda
+YOLO_DEVICE = "auto"
 
 # ── GPU performance ───────────────────────────────────────────────────────────
 # YOLO_HALF: FP16 inference — ~2× throughput, ~half VRAM, negligible accuracy loss.

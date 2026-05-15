@@ -59,6 +59,7 @@ class ProctorCoordinator:
     def __init__(
         self,
         model_path:       str   = "finalBestV5.pt",
+        device:           str   = "auto",   # "auto" | "cuda" | "cpu"
         max_sessions:     int   = 5,
         tick_rate:        int   = TICK_RATE,
         default_conf:     float = 0.50,
@@ -74,6 +75,7 @@ class ProctorCoordinator:
     ):
         self.detector = ObjectDetector(
             model_path    = model_path,
+            device        = device,
             default_conf  = default_conf,
             person_conf   = person_conf,
             phone_conf    = phone_conf,

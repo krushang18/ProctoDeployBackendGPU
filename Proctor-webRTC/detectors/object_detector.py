@@ -96,11 +96,47 @@ def _ensure_cuda(min_vram_gb: float) -> None:
         logger.warning("VRAM check failed: %s", exc)
 
 
+def _resolve_device(device: str, min_vram_gb: float) -> str:
+    """
+    Resolve "auto" / "cuda" / "cpu" to the actual device string.
+    - "cuda": requires CUDA, raises if unavailable.
+    - "cpu":  forces CPU regardless of GPU availability.
+    - "auto": uses CUDA if available and VRAM >= min_vram_gb, else CPU.
+    """
+    if device == "cpu":
+        logger.info("ObjectDetector: device=cpu (forced)")
+        return "cpu"
+    if device == "cuda":
+        _ensure_cuda(min_vram_gb)
+        return "cuda"
+    # "auto"
+    if torch.cuda.is_available():
+        try:
+            props     = torch.cuda.get_device_properties(0)
+            free_vram = (props.total_memory - torch.cuda.memory_allocated(0)) / 1e9
+            if free_vram >= min_vram_gb:
+                _ensure_cuda(min_vram_gb)
+                return "cuda"
+            logger.warning(
+                "Auto-select: GPU free VRAM %.1f GB < %.1f GB — falling back to CPU",
+                free_vram, min_vram_gb,
+            )
+        except Exception as exc:
+            logger.warning("Auto-select: VRAM check failed (%s) — falling back to CPU", exc)
+    else:
+        logger.info("ObjectDetector: no CUDA detected — using CPU")
+    return "cpu"
+
+
 class ObjectDetector:
     """
-    YOLO-based object detector — CUDA GPU required.
+    YOLO-based object detector.
 
-    GPU performance features:
+    device="auto"  → CUDA if available and VRAM >= min_vram_gb, else CPU
+    device="cuda"  → CUDA required (raises if unavailable)
+    device="cpu"   → CPU forced
+
+    GPU performance features (CUDA only):
       • FP16 (half-precision) inference  — ~2× throughput, ~½ VRAM
       • Warmup forward passes at startup — pre-compiles CUDA kernels
       • Batch inference                  — one YOLO forward pass for N candidates
@@ -109,18 +145,18 @@ class ObjectDetector:
     def __init__(
         self,
         model_path:    str   = "finalBestV5.pt",
+        device:        str   = "auto",  # "auto" | "cuda" | "cpu"
         default_conf:  float = 0.50,
         person_conf:   float = 0.30,
         phone_conf:    float = 0.65,
         book_conf:     float = 0.70,
         audio_conf:    float = 0.41,
-        half:          bool  = True,    # FP16 by default on GPU
+        half:          bool  = True,    # FP16 — silently ignored on CPU
         warmup_frames: int   = 0,
         min_vram_gb:   float = 2.0,
         imgsz:         int   = 640,     # inference resolution; set at load time, NOT at call time
     ):
-        _ensure_cuda(min_vram_gb)
-        self.device = "cuda"
+        self.device = _resolve_device(device, min_vram_gb)
         self.model  = YOLO(model_path)
         self.model.to(self.device)
 
@@ -131,11 +167,12 @@ class ObjectDetector:
             self.model.overrides['imgsz'] = imgsz
             logger.info("ObjectDetector: inference imgsz set to %d (load-time override)", imgsz)
 
-        self._half = half
+        # FP16 only on CUDA — CPU FP16 is slower than FP32
+        self._half = half and self.device == "cuda"
         if self._half:
             self.model.half()
 
-        logger.info("ObjectDetector ready  device=cuda  half=%s", self._half)
+        logger.info("ObjectDetector ready  device=%s  half=%s", self.device, self._half)
 
         self.default_conf     = default_conf
         self.person_conf      = person_conf
@@ -190,20 +227,27 @@ class ObjectDetector:
     @property
     def device_info(self) -> dict:
         """Return human-readable device information for /system/report."""
-        props = torch.cuda.get_device_properties(0)
-        return {
-            "device"             : "cuda",
-            "half_precision"     : self._half,
-            "batch_supported"    : self._supports_batch,
-            "total_batches"      : self._total_batches,
-            "total_frames"       : self._total_frames,
-            "last_batch_ms"      : round(self._last_batch_ms, 2),
-            "gpu_name"           : props.name,
-            "gpu_vram_gb"        : round(props.total_memory / 1e9, 1),
-            "gpu_compute"        : f"{props.major}.{props.minor}",
-            "gpu_mem_alloc_mb"   : round(torch.cuda.memory_allocated(0) / 1024 / 1024, 1),
-            "gpu_mem_reserved_mb": round(torch.cuda.memory_reserved(0) / 1024 / 1024, 1),
+        base = {
+            "device"          : self.device,
+            "half_precision"  : self._half,
+            "batch_supported" : self._supports_batch,
+            "total_batches"   : self._total_batches,
+            "total_frames"    : self._total_frames,
+            "last_batch_ms"   : round(self._last_batch_ms, 2),
         }
+        if self.device == "cuda":
+            try:
+                props = torch.cuda.get_device_properties(0)
+                base.update({
+                    "gpu_name"           : props.name,
+                    "gpu_vram_gb"        : round(props.total_memory / 1e9, 1),
+                    "gpu_compute"        : f"{props.major}.{props.minor}",
+                    "gpu_mem_alloc_mb"   : round(torch.cuda.memory_allocated(0) / 1024 / 1024, 1),
+                    "gpu_mem_reserved_mb": round(torch.cuda.memory_reserved(0) / 1024 / 1024, 1),
+                })
+            except Exception:
+                pass
+        return base
 
     def _parse_result(self, r) -> list[dict]:
         detections = []

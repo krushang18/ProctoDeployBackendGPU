@@ -56,12 +56,14 @@ async def lifespan(app: FastAPI):
     global coordinator, _session_config, MAX_CONNECTIONS
     _session_config = _build_config()
     MAX_CONNECTIONS = _session_config.get("MAX_SESSIONS", 40)
-    # CLI --half / --warmup override config.py values (set by main.py via env vars)
+    # CLI args override config.py values (set by main.py via env vars)
+    _device  = os.getenv("PROCTOR_DEVICE") or _session_config.get("YOLO_DEVICE", "auto")
     _half    = os.getenv("PROCTOR_HALF")    == "1" if os.getenv("PROCTOR_HALF") else _session_config.get("YOLO_HALF",         True)
     _warmup  = int(os.getenv("PROCTOR_WARMUP")) if os.getenv("PROCTOR_WARMUP") else _session_config.get("YOLO_WARMUP_FRAMES", 3)
 
     coordinator = ProctorCoordinator(
         model_path        = _session_config["YOLO_MODEL_PATH"],
+        device            = _device,
         max_sessions      = MAX_CONNECTIONS,
         tick_rate         = _session_config.get("TICK_RATE", 10),
         default_conf      = _session_config.get("YOLO_DEFAULT_CONF", 0.50),
@@ -76,8 +78,8 @@ async def lifespan(app: FastAPI):
         mediapipe_stride  = _session_config.get("MEDIAPIPE_STRIDE",    1),
     )
     await coordinator.start()
-    logger.info("ProctorCoordinator started (max=%d  half=%s  warmup=%d)",
-                MAX_CONNECTIONS, _half, _warmup)
+    logger.info("ProctorCoordinator started (device=%s  max=%d  half=%s  warmup=%d)",
+                _device, MAX_CONNECTIONS, _half, _warmup)
     yield
     if coordinator is not None:
         await coordinator.stop()

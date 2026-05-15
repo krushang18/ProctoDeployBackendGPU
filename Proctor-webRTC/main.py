@@ -35,7 +35,11 @@ KEY_FILE  = Path.home() / "key.pem"
 CERT_FILE = Path.home() / "cert.pem"
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="AI Proctor Server (GPU)")
+    parser = argparse.ArgumentParser(description="AI Proctor Server")
+    parser.add_argument(
+        "--device", default="", metavar="DEVICE",
+        help="Inference device: auto (default from config), cuda, or cpu.",
+    )
     parser.add_argument(
         "--half", action="store_true", default=False,
         help="Enable FP16 half-precision (~2× throughput, ~½ VRAM). Default from config.py.",
@@ -51,6 +55,8 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     # Pass CLI choices to server.py via environment variables.
+    if args.device:
+        os.environ["PROCTOR_DEVICE"] = args.device
     os.environ["PROCTOR_HALF"]   = "1" if args.half else "0"
     os.environ["PROCTOR_WARMUP"] = str(args.warmup)
 
@@ -58,8 +64,8 @@ if __name__ == "__main__":
     scheme  = "https" if use_ssl else "http"
 
     logger.info(
-        "Starting AI Proctor server  %s://0.0.0.0:%d  ssl=%s  half=%s  warmup=%d",
-        scheme, args.port, use_ssl, args.half, args.warmup,
+        "Starting AI Proctor server  %s://0.0.0.0:%d  ssl=%s  device=%s  half=%s  warmup=%d",
+        scheme, args.port, use_ssl, args.device or "config", args.half, args.warmup,
     )
 
     uvicorn.run(
